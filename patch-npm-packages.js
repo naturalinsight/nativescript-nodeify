@@ -1,20 +1,22 @@
-module.exports = function ($logger, $projectData, changesInfo) {
-  if (!changesInfo.modulesChanged) {
-    return;
+module.exports = function ($logger, $projectData, hookArgs) {
+  // return;
+  var appFilesUpdaterOptions = (hookArgs && hookArgs.appFilesUpdaterOptions) || {};
+  if (appFilesUpdaterOptions.bundle) {
+      return;
   }
-
+  console.log("lolilol")
   var fs = require('fs'),
       path = require('path'),
       replaceInFile = require('replace-in-file');
-
+  
   function log(what) {
     // enable this line to see what the nodeify plugin is up to
-    // console.log(what);
+    console.log(what);
   }
-
+  
   var shims = require('./shims.json');
-
-// any shims that are installed in nativescript-nodeify/node_modules need an update
+  
+  // any shims that are installed in nativescript-nodeify/node_modules need an update
   var nodeFolder = path.join(__dirname, "node_modules");
   if (fs.existsSync(nodeFolder)) {
     var files = fs.readdirSync(nodeFolder);
@@ -23,20 +25,10 @@ module.exports = function ($logger, $projectData, changesInfo) {
       shims[filename] = "nativescript-nodeify/node_modules/" + filename;
     }
   }
-
-// never touch these
-  var blacklist = [
-    "nativescript-nodeify",
-    "nativescript-node",
-    "tns-core-modules",
-    "typescript",
-    "form-data",
-    "replace-in-file",
-    "glob",
-    "fs.realpath",
-    ".bin"
-  ];
-
+  var whitelist = [
+    "aws-sdk"
+  ]
+  
   function changeFiles(files, replace, by) {
     return replaceInFile.sync({
       files: files,
@@ -45,7 +37,7 @@ module.exports = function ($logger, $projectData, changesInfo) {
       allowEmptyPaths: true
     });
   }
-
+  
   function findFilesByName(startPath, filter, result) {
     if (fs.existsSync(startPath)) {
       var files = fs.readdirSync(startPath);
@@ -62,7 +54,7 @@ module.exports = function ($logger, $projectData, changesInfo) {
     }
     return result;
   }
-
+  
   function patchPackageJsonAndFetchBrowserNode(fileName, file, nodeCompatPatchNode) {
     var main = file.main;
     var browser = file.browser;
@@ -84,44 +76,44 @@ module.exports = function ($logger, $projectData, changesInfo) {
         }
       }
     }
-
+  
     if (patched) {
       fs.writeFileSync(fileName, JSON.stringify(file, null, 2));
     }
     return browser;
   }
-
+  
   function patchPackage(packagepath, nodeCompatPatchNode) {
     var patchInPackageJson = Object.assign({}, shims);
     patchInPackageJson = Object.assign(patchInPackageJson, nodeCompatPatchNode);
-
+  
     var fileName = packagepath + "/package.json";
     var file = require(fileName);
-    if (blacklist.indexOf(file.name) > -1) {
+    if (whitelist.indexOf(file.name) == -1) {
       return;
     }
-
+  
     var browserNode = patchPackageJsonAndFetchBrowserNode(fileName, file, patchInPackageJson) || {};
     var patchMe = Object.assign({}, shims);
     if (typeof browserNode === "object") {
       patchMe = Object.assign(patchMe, browserNode);
     }
     patchMe = Object.assign(patchMe, nodeCompatPatchNode);
-
+  
     var transformed = [];
     var nodeValue;
     for (nodeValue in patchMe) {
       if (patchMe.hasOwnProperty(nodeValue)) {
-
+  
         var browserReplacement = patchMe[nodeValue];
-
+  
         if (nodeValue.endsWith(".js")) {
           nodeValue = nodeValue.substring(0, nodeValue.indexOf(".js"));
         }
         if (browserReplacement && browserReplacement.endsWith(".js")) {
           browserReplacement = browserReplacement.substring(0, browserReplacement.indexOf(".js"));
         }
-
+  
         if (!nodeValue.startsWith(".") && (!browserReplacement || !browserReplacement.startsWith("."))) {
           // these don't use relative paths, so let's use a quick search-replace algorithm here
           transformed.push([nodeValue, browserReplacement]);
@@ -148,18 +140,18 @@ module.exports = function ($logger, $projectData, changesInfo) {
                 if (prefixPath === "") {
                   prefixPath = "./"
                 }
-
+  
                 if (prefixPath === "./") {
                   if (!browserReplacement) {
                     log("--------- no browserReplacement for " + nodeValue + " in " + packagepath);
                   }
                   var patchMeWithoutPrefix = nodeValue.indexOf("/") === -1 ? nodeValue : nodeValue.substring(nodeValue.indexOf("/") + 1); // "lib/node_loader"; // TODO dynamic
                   var patchMeValueWithoutPrefix = browserReplacement.indexOf("/") === -1 ? browserReplacement : browserReplacement.substring(browserReplacement.indexOf("/") + 1); // "lib/browser_loader" ; // browserReplacement; // TODO dynamic
-
+  
                   var where = [partiallyChangedFile],
                       what = new RegExp("__REPLACE__REAL__PATH__(.*)" + patchMeWithoutPrefix, "g"),
                       by = prefixPath + patchMeValueWithoutPrefix;
-
+  
                   var changedFiles = changeFiles(where, what, by);
                   if (changedFiles.length > 0) {
                     log("------------------ changed " + partiallyChangedFile + ", " + what + " --> " + by);
@@ -172,19 +164,19 @@ module.exports = function ($logger, $projectData, changesInfo) {
         }
       }
     }
-
+  
     var where = [path.join(packagepath, "**", "*.js")],
         what = new RegExp("__REPLACE__REAL__PATH__", "g"),
         by = "";
-
+  
     var changedFiles = changeFiles(where, what, by);
     if (changedFiles.length > 0) {
       log("--- changed files back: " + changedFiles.join("\n ----- "));
     }
-
+  
     transformFiles(packagepath, transformed);
   }
-
+  
   function transformFiles(packagepath, transformations) {
     var allChangedFiles = [];
     for (var i in transformations) {
@@ -200,34 +192,34 @@ module.exports = function ($logger, $projectData, changesInfo) {
     }
     return allChangedFiles;
   }
-
+  
   try {
     var packages = [];
-
+  
     function getPackageJsons(folderStr) {
       var folder = fs.readdirSync(folderStr);
       for (var j = 0; j < folder.length; j++) {
         var folderName = folder[j];
-        if (/*appDependencies.hasOwnProperty(folderName) &&*/ blacklist.indexOf(folderName) === -1 && !folderName.startsWith("@") && (folderName === "nativescript-nodeify" || !folderName.startsWith("nativescript"))) {
+        if (/*appDependencies.hasOwnProperty(folderName) &&*/ whitelist.indexOf(folderName) > -1 && !folderName.startsWith("@") && (folderName === "nativescript-nodeify" || !folderName.startsWith("nativescript"))) {
           var f = path.join(folderStr, folderName);
           findFilesByName(f, "package.json", packages);
         }
       }
     }
-
+  
     // fills the packages array with local and global dependencies
     getPackageJsons(path.join(__dirname, ".."));
     if (fs.existsSync(path.join(__dirname, "node_modules"))) {
       getPackageJsons(path.join(__dirname, "node_modules"));
     }
-
+  
     // patch global dependencies
     var appPackageJson = require($projectData.projectFilePath);
     var customGlobalPatches = appPackageJson.nativescript["nodeify"] ? appPackageJson.nativescript["nodeify"]["global-dependencies"] || {} : {};
     for (var p in packages) {
       patchPackage(packages[p], customGlobalPatches);
     }
-
+  
     // replace any inner dependencies (should hardly ever be required btw)
     var customLocalPatches = appPackageJson.nativescript["nodeify"] ? appPackageJson.nativescript["nodeify"]["package-dependencies"] : undefined;
     if (customLocalPatches) {
@@ -249,4 +241,4 @@ module.exports = function ($logger, $projectData, changesInfo) {
   } catch (error) {
     console.error('Error occurred:', error);
   }
-};
+  };
